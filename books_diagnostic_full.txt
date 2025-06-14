@@ -1,0 +1,273 @@
+Apple Books Page Content Extractor
+==================================================
+
+✅ Found Books app (PID: 5654)
+📚 Found 1 window(s)
+
+🔍 DIAGNOSTIC MODE: Exploring accessibility attributes
+============================================================
+
+Window-level attributes:
+[AXWindow]
+  Available attributes: 29
+    AXActivationPoint: [__NSCFType]
+    AXChildren: Array[4 items]
+    AXChildrenInNavigationOrder: Array[4 items]
+    AXCloseButton: [__NSCFType]
+    AXFocused: 0
+    AXFrame: [__NSCFType]
+    AXFullScreen: 0
+    AXFullScreenButton: [__NSCFType]
+    AXIdentifier: SceneWindow
+    AXMain: 0
+    AXMinimizeButton: [__NSCFType]
+    AXMinimized: 1
+    AXModal: 0
+    AXParent: [__NSCFType]
+    AXPosition: [__NSCFType]
+    AXRole: AXWindow
+    AXRoleDescription: dialogue
+    AXSections: Array[11 items]
+    AXSize: [__NSCFType]
+    AXSubrole: AXDialog
+    AXTitle: Home
+    AXZoomButton: [__NSCFType]
+  Checking additional attributes:
+    AXIdentifier: SceneWindow
+    AXRoleDescription: dialogue
+    AXSubrole: AXDialog
+    AXTitle: Home
+  Children: 4
+  Child 0:
+  [AXGroup]
+    Available attributes: 13
+      AXChildren: Array[1 items]
+      AXChildrenInNavigationOrder: Array[1 items]
+      AXFocused: 0
+      AXFrame: [__NSCFType]
+      AXParent: [__NSCFType]
+      AXPosition: [__NSCFType]
+      AXRole: AXGroup
+      AXRoleDescription: group
+      AXSize: [__NSCFType]
+      AXSubrole: iOSContentGroup
+      AXTopLevelUIElement: [__NSCFType]
+      AXWindow: [__NSCFType]
+    Checking additional attributes:
+      AXRoleDescription: group
+      AXSubrole: iOSContentGroup
+    Children: 1
+    Child 0:
+    [AXGroup]
+      Available attributes: 25
+        AXActivationPoint: [__NSCFType]
+        AXChildren: Array[2 items]
+        AXChildrenInNavigationOrder: Array[2 items]
+        AXCustomRotors: Array[1 items]
+        AXEnabled: 1
+        AXFocused: 0
+        AXFrame: [__NSCFType]
+        AXParent: [__NSCFType]
+        AXPosition: [__NSCFType]
+        AXRole: AXGroup
+        AXRoleDescription: group
+        AXSelected: 0
+        AXSize: [__NSCFType]
+        AXTopLevelUIElement: [__NSCFType]
+        AXUserInputLabels: Array[0 items]
+        AXWindow: [__NSCFType]
+      Checking additional attributes:
+        AXRoleDescription: group
+      Children: 2
+      Child 0:
+      [AXGroup]
+        Available attributes: 25
+          AXActivationPoint: [__NSCFType]
+          AXChildren: Array[1 items]
+          AXChildrenInNavigationOrder: Array[1 items]
+          AXCustomRotors: Array[1 items]
+          AXEnabled: 1
+          AXFocused: 0
+          AXFrame: [__NSCFType]
+          AXParent: [__NSCFType]
+          AXPosition: [__NSCFType]
+          AXRole: AXGroup
+          AXRoleDescription: group
+          AXSelected: 0
+          AXSize: [__NSCFType]
+          AXTopLevelUIElement: [__NSCFType]
+          AXUserInputLabels: Array[0 items]
+          AXWindow: [__NSCFType]
+        Checking additional attributes:
+          AXRoleDescription: group
+      Child 1:
+      [AXGroup]
+        Available attributes: 25
+          AXActivationPoint: [__NSCFType]
+          AXChildren: Array[1 items]
+          AXChildrenInNavigationOrder: Array[1 items]
+          AXCustomRotors: Array[1 items]
+          AXEnabled: 1
+          AXFocused: 0
+          AXFrame: [__NSCFType]
+          AXParent: [__NSCFType]
+          AXPosition: [__NSCFType]
+          AXRole: AXGroup
+          AXRoleDescription: group
+          AXSelected: 0
+          AXSize: [__NSCFType]
+          AXTopLevelUIElement: [__NSCFType]
+          AXUserInputLabels: Array[0 items]
+          AXWindow: [__NSCFType]
+        Checking additional attributes:
+          AXRoleDescription: group
+  Child 1:
+  [AXButton]
+    Available attributes: 14
+      AXEdited: 0
+      AXEnabled: 1
+      AXFocused: 0
+      AXFrame: [__NSCFType]
+      AXParent: [__NSCFType]
+      AXPosition: [__NSCFType]
+      AXRole: AXButton
+      AXRoleDescription: close button
+      AXSize: [__NSCFType]
+      AXSubrole: AXCloseButton
+      AXTopLevelUIElement: [__NSCFType]
+      AXWindow: [__NSCFType]
+    Checking additional attributes:
+      AXRoleDescription: close button
+      AXSubrole: AXCloseButton
+  Child 2:
+  [AXButton]
+    Available attributes: 14
+      AXChildren: Array[1 items]
+      AXEnabled: 1
+      AXFocused: 0
+      AXFrame: [__NSCFType]
+      AXHelp: this button also has an action to zoom the window
+      AXParent: [__NSCFType]
+      AXPosition: [__NSCFType]
+      AXRole: AXButton
+      AXRoleDescription: full screen button
+      AXSize: [__NSCFType]
+      AXSubrole: AXFullScreenButton
+      AXTopLevelUIElement: [__NSCFType]
+      AXWindow: [__NSCFType]
+    Checking additional attributes:
+      AXHelp: this button also has an action to zoom the window
+      AXRoleDescription: full screen button
+      AXSubrole: AXFullScreenButton
+    Children: 1
+    Child 0:
+    [AXGroup]
+      Available attributes: 12
+        AXChildren: Array[0 items]
+        AXChildrenInNavigationOrder: Array[0 items]
+        AXFocused: 0
+        AXFrame: [__NSCFType]
+        AXParent: [__NSCFType]
+        AXPosition: [__NSCFType]
+        AXRole: AXGroup
+        AXRoleDescription: group
+        AXSize: [__NSCFType]
+        AXTopLevelUIElement: [__NSCFType]
+        AXWindow: [__NSCFType]
+      Checking additional attributes:
+        AXRoleDescription: group
+      Children: 0
+  Child 3:
+  [AXButton]
+    Available attributes: 13
+      AXEnabled: 1
+      AXFocused: 0
+      AXFrame: [__NSCFType]
+      AXParent: [__NSCFType]
+      AXPosition: [__NSCFType]
+      AXRole: AXButton
+      AXRoleDescription: minimise button
+      AXSize: [__NSCFType]
+      AXSubrole: AXMinimizeButton
+      AXTopLevelUIElement: [__NSCFType]
+      AXWindow: [__NSCFType]
+    Checking additional attributes:
+      AXRoleDescription: minimise button
+      AXSubrole: AXMinimizeButton
+
+
+Searching for content area...
+
+❌ Could not find specific content area
+
+
+Application-level attributes:
+------------------------------------------------------------
+[AXApplication]
+  Available attributes: 19
+    AXChildren: Array[2 items]
+    AXChildrenInNavigationOrder: Array[2 items]
+    AXEnhancedUserInterface: 0
+    AXFocusedUIElement: [__NSCFType]
+    AXFocusedWindow: [__NSCFType]
+    AXFrontmost: 0
+    AXFunctionRowTopLevelElements: Array[0 items]
+    AXHidden: 0
+    AXMainWindow: [__NSCFType]
+    AXMenuBar: [__NSCFType]
+    AXPreferredLanguage: en_GB
+    AXRole: AXApplication
+    AXRoleDescription: application
+    AXTitle: Books
+    AXWindows: Array[1 items]
+  Checking additional attributes:
+    AXRoleDescription: application
+    AXTitle: Books
+  Children: 2
+  Child 0:
+  [AXWindow]
+    Available attributes: 29
+      AXActivationPoint: [__NSCFType]
+      AXChildren: Array[4 items]
+      AXChildrenInNavigationOrder: Array[4 items]
+      AXCloseButton: [__NSCFType]
+      AXFocused: 0
+      AXFrame: [__NSCFType]
+      AXFullScreen: 0
+      AXFullScreenButton: [__NSCFType]
+      AXIdentifier: SceneWindow
+      AXMain: 0
+      AXMinimizeButton: [__NSCFType]
+      AXMinimized: 1
+      AXModal: 0
+      AXParent: [__NSCFType]
+      AXPosition: [__NSCFType]
+      AXRole: AXWindow
+      AXRoleDescription: dialogue
+      AXSections: Array[11 items]
+      AXSize: [__NSCFType]
+      AXSubrole: AXDialog
+      AXTitle: Home
+      AXZoomButton: [__NSCFType]
+    Checking additional attributes:
+      AXIdentifier: SceneWindow
+      AXRoleDescription: dialogue
+      AXSubrole: AXDialog
+      AXTitle: Home
+  Child 1:
+  [AXMenuBar]
+    Available attributes: 11
+      AXChildren: Array[9 items]
+      AXEnabled: 1
+      AXFrame: [__NSCFType]
+      AXParent: [__NSCFType]
+      AXPosition: [__NSCFType]
+      AXRole: AXMenuBar
+      AXSelectedChildren: Array[0 items]
+      AXSize: [__NSCFType]
+      AXTopLevelUIElement: [__NSCFType]
+      AXVisibleChildren: Array[9 items]
+    Checking additional attributes:
+      AXRoleDescription: menu bar
+
+🔍 Diagnostic exploration complete

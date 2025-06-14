@@ -21,8 +21,33 @@ import AVFoundation
 
 // MARK: - Data Models
 
-/// Represents extracted page content from Books
-struct PageContent: Codable {
+/// Represents a single chapter with its content
+struct Chapter: Codable {
+    let chapter_title: String?
+    let chapter_content: String
+    let chars_count: Int
+    let word_count: Int
+    
+    private enum CodingKeys: String, CodingKey {
+        case chapter_title = "chapter-title"
+        case chapter_content = "chapter-content"
+        case chars_count
+        case word_count
+    }
+}
+
+/// Represents the complete extracted book content
+struct BookContent: Codable {
+    let title: String
+    let total_chars_count: Int
+    let total_word_count: Int
+    let extraction_time_ms: Int
+    let language: String
+    let content: [Chapter]
+}
+
+/// Represents extracted page content from Books (used internally)
+struct PageContent {
     let title: String
     let content: String
     let words_count: Int
@@ -30,25 +55,17 @@ struct PageContent: Codable {
     let extraction_time_ms: Int
     let language: String
     let chapter_title: String?
-    
-    // Define encoding order
-    private enum CodingKeys: String, CodingKey {
-        case title
-        case content
-        case words_count
-        case chars_count
-        case extraction_time_ms
-        case language
-        case chapter_title = "chapter-title"
-    }
 }
 
 // MARK: - Global variables
 
 var debugMode = false
 var speakMode = false
+var diagnosticMode = false
 var startTime = Date()
 var pagesToExtract = 1
+var pageTransitionDelay = 0.3 // Default 300ms
+var outputFile: String? = nil
 
 // MARK: - Process Management
 
@@ -80,6 +97,104 @@ func getBooksProcessID() -> pid_t? {
 struct ExtractedContent {
     var headings: [String] = []
     var texts: [String] = []
+}
+
+/// Diagnostic function to explore all accessibility attributes
+func exploreAccessibilityAttributes(_ element: AXUIElement, depth: Int = 0, maxDepth: Int = 5) {
+    guard depth < maxDepth else { return }
+    
+    let indent = String(repeating: "  ", count: depth)
+    
+    // Get element role
+    var role: CFTypeRef?
+    AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role)
+    let roleStr = role as? String ?? "Unknown"
+    
+    printDebug("\(indent)[\(roleStr)]")
+    
+    // Get all attribute names
+    var attributeNames: CFArray?
+    let result = AXUIElementCopyAttributeNames(element, &attributeNames)
+    
+    if result == .success, let attributes = attributeNames as? [String] {
+        printDebug("\(indent)  Available attributes: \(attributes.count)")
+        
+        // Explore each attribute
+        for attribute in attributes.sorted() {
+            var value: CFTypeRef?
+            if AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success {
+                let valueStr: String
+                if let str = value as? String {
+                    valueStr = str.prefix(100) + (str.count > 100 ? "..." : "")
+                } else if let num = value as? NSNumber {
+                    valueStr = num.description
+                } else if let arr = value as? [Any] {
+                    valueStr = "Array[\(arr.count) items]"
+                } else if value != nil {
+                    valueStr = "[\(type(of: value!))]"
+                } else {
+                    valueStr = "nil"
+                }
+                
+                // Only print non-empty values
+                if !valueStr.isEmpty && valueStr != "nil" {
+                    printDebug("\(indent)    \(attribute): \(valueStr)")
+                }
+            }
+        }
+    }
+    
+    // Also try some common attributes that might not be in the list
+    let additionalAttributes = [
+        "AXIdentifier",
+        "AXLabel", 
+        "AXHelp",
+        "AXRoleDescription",
+        "AXSubrole",
+        "AXTitle",
+        "AXDescription",
+        "AXValue",
+        "AXURL",
+        "AXFilename",
+        "AXSelected",
+        "AXEnabled",
+        "AXFocused",
+        "AXParent",
+        "AXTopLevelUIElement",
+        "AXPosition",
+        "AXSize",
+        "AXChildren"
+    ]
+    
+    printDebug("\(indent)  Checking additional attributes:")
+    for attr in additionalAttributes {
+        var value: CFTypeRef?
+        if AXUIElementCopyAttributeValue(element, attr as CFString, &value) == .success {
+            if let str = value as? String, !str.isEmpty {
+                printDebug("\(indent)    \(attr): \(str.prefix(100))")
+            }
+        }
+    }
+    
+    // If not too deep, explore children
+    if depth < maxDepth - 1 {
+        var children: CFTypeRef?
+        if AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &children) == .success,
+           let childArray = children as? [AXUIElement] {
+            printDebug("\(indent)  Children: \(childArray.count)")
+            
+            // Limit children exploration to avoid too much output
+            let maxChildren = diagnosticMode ? 10 : 5
+            for (index, child) in childArray.prefix(maxChildren).enumerated() {
+                printDebug("\(indent)  Child \(index):")
+                exploreAccessibilityAttributes(child, depth: depth + 1, maxDepth: maxDepth)
+            }
+            
+            if childArray.count > maxChildren {
+                printDebug("\(indent)  ... and \(childArray.count - maxChildren) more children")
+            }
+        }
+    }
 }
 
 /// Extract structured content from a UI element recursively
@@ -393,6 +508,12 @@ func main() {
     let args = CommandLine.arguments
     debugMode = args.contains("debug")
     speakMode = args.contains("--speak")
+    diagnosticMode = args.contains("--diagnostic")
+    
+    // Diagnostic mode implies debug mode
+    if diagnosticMode {
+        debugMode = true
+    }
     
     // Parse --pages argument
     if let pagesIndex = args.firstIndex(of: "--pages"),
@@ -401,6 +522,22 @@ func main() {
        pages > 0 {
         pagesToExtract = pages
         printDebug("Will extract \(pagesToExtract) page(s)")
+    }
+    
+    // Parse --delay argument (in milliseconds)
+    if let delayIndex = args.firstIndex(of: "--delay"),
+       delayIndex + 1 < args.count,
+       let delayMs = Int(args[delayIndex + 1]),
+       delayMs > 0 {
+        pageTransitionDelay = Double(delayMs) / 1000.0
+        printDebug("Page transition delay: \(delayMs)ms")
+    }
+    
+    // Parse --output argument
+    if let outputIndex = args.firstIndex(of: "--output"),
+       outputIndex + 1 < args.count {
+        outputFile = args[outputIndex + 1]
+        printDebug("Output will be saved to: \(outputFile!)")
     }
     
     // Setup
@@ -480,13 +617,40 @@ func main() {
         exit(1)
     }
     
+    // If diagnostic mode, explore accessibility tree and exit
+    if diagnosticMode {
+        printDebug("🔍 DIAGNOSTIC MODE: Exploring accessibility attributes")
+        printDebug(String(repeating: "=", count: 60))
+        printDebug("\nWindow-level attributes:")
+        exploreAccessibilityAttributes(mainWindow, maxDepth: 4)
+        
+        printDebug("\n\nSearching for content area...")
+        if let contentArea = findBooksContentArea(mainWindow) {
+            printDebug("\n✅ Found content area! Exploring its attributes:")
+            printDebug(String(repeating: "-", count: 60))
+            exploreAccessibilityAttributes(contentArea, maxDepth: 3)
+        } else {
+            printDebug("\n❌ Could not find specific content area")
+        }
+        
+        printDebug("\n\nApplication-level attributes:")
+        printDebug(String(repeating: "-", count: 60))
+        exploreAccessibilityAttributes(appElement, maxDepth: 2)
+        
+        printDebug("\n🔍 Diagnostic exploration complete")
+        exit(0)
+    }
+    
     // Variables to collect content from all pages
-    var allPageContents: [String] = []
+    var chapters: [Chapter] = []
+    var currentChapterTitle: String? = nil
+    var currentChapterContent: [String] = []
     var bookTitle = "Unknown"
-    var firstChapterTitle: String? = nil
     var totalWords = 0
     var totalChars = 0
     var detectedLanguage = "unknown"
+    var previousPageContent: String? = nil
+    var duplicateCount = 0
     
     // Extract content from multiple pages
     for pageNumber in 1...pagesToExtract {
@@ -496,15 +660,59 @@ func main() {
         let elapsedTime = Int(Date().timeIntervalSince(startTime) * 1000)
         
         if let pageContent = extractPageContent(from: mainWindow, extractionTime: elapsedTime) {
-            // Store content
-            allPageContents.append(pageContent.content)
+            // Check for duplicate content
+            if pageContent.content == previousPageContent {
+                duplicateCount += 1
+                printDebug("⚠️  Duplicate content detected (occurrence #\(duplicateCount))")
+                
+                // If we get duplicate content, it likely means we've reached the end of the book
+                // or navigation isn't working
+                if duplicateCount >= 2 {
+                    printDebug("🛑 Stopping extraction: Multiple duplicate pages detected")
+                    printDebug("   (Likely reached end of book or navigation failure)")
+                    break
+                }
+                
+                // Try one more time with a longer delay
+                printDebug("   Retrying with longer delay...")
+                Thread.sleep(forTimeInterval: pageTransitionDelay * 2)
+                continue
+            } else {
+                // Reset duplicate count if we get new content
+                duplicateCount = 0
+            }
+            
+            // Store current content for next comparison
+            previousPageContent = pageContent.content
             
             // Update metadata from first page
             if pageNumber == 1 {
                 bookTitle = pageContent.title
-                firstChapterTitle = pageContent.chapter_title
                 detectedLanguage = pageContent.language
+                currentChapterTitle = pageContent.chapter_title
             }
+            
+            // Check if we've entered a new chapter
+            if pageContent.chapter_title != nil && pageContent.chapter_title != currentChapterTitle {
+                // Save the previous chapter if it has content
+                if !currentChapterContent.isEmpty {
+                    let chapterText = currentChapterContent.joined(separator: "\n\n")
+                    let titleText = currentChapterTitle ?? ""
+                    let combinedText = titleText + " " + chapterText
+                    chapters.append(Chapter(
+                        chapter_title: currentChapterTitle,
+                        chapter_content: chapterText,
+                        chars_count: charCount(combinedText),
+                        word_count: wordCount(combinedText)
+                    ))
+                    currentChapterContent = []
+                }
+                currentChapterTitle = pageContent.chapter_title
+                printDebug("📖 New chapter detected: \(currentChapterTitle ?? "Untitled")")
+            }
+            
+            // Add page content to current chapter
+            currentChapterContent.append(pageContent.content)
             
             // Accumulate stats
             totalWords += pageContent.words_count
@@ -512,6 +720,9 @@ func main() {
             
             if debugMode {
                 printDebug("✅ Extracted page \(pageNumber): \(pageContent.words_count) words")
+                if let chapterTitle = pageContent.chapter_title {
+                    printDebug("   Chapter: \(chapterTitle)")
+                }
             }
             
             // Navigate to next page if not the last page
@@ -521,7 +732,7 @@ func main() {
                     printDebug("Warning: Navigation might have failed")
                 }
                 // Wait for page transition
-                Thread.sleep(forTimeInterval: 0.5)
+                Thread.sleep(forTimeInterval: pageTransitionDelay)
             }
         } else {
             printDebug("❌ Failed to extract page \(pageNumber)")
@@ -529,8 +740,21 @@ func main() {
         }
     }
     
+    // Don't forget to add the last chapter
+    if !currentChapterContent.isEmpty {
+        let chapterText = currentChapterContent.joined(separator: "\n\n")
+        let titleText = currentChapterTitle ?? ""
+        let combinedText = titleText + " " + chapterText
+        chapters.append(Chapter(
+            chapter_title: currentChapterTitle,
+            chapter_content: chapterText,
+            chars_count: charCount(combinedText),
+            word_count: wordCount(combinedText)
+        ))
+    }
+    
     // Check if we extracted any content
-    if allPageContents.isEmpty {
+    if chapters.isEmpty {
         printDebug("\n❌ Could not extract any page content.")
         printDebug("Make sure:")
         printDebug("  1. You have a book open in Books")
@@ -539,12 +763,10 @@ func main() {
         exit(1)
     }
     
-    // Consolidate all pages
-    let consolidatedContent = allPageContents.joined(separator: "\n\n")
     let totalElapsedTime = Int(Date().timeIntervalSince(startTime) * 1000)
     
     if debugMode {
-        printDebug("\n✅ Successfully extracted \(allPageContents.count) page(s)!")
+        printDebug("\n✅ Successfully extracted \(chapters.count) chapter(s)!")
         printDebug(String(repeating: "-", count: 50))
         printDebug("Total words: \(totalWords)")
         printDebug("Total characters: \(totalChars)")
@@ -553,28 +775,43 @@ func main() {
         printDebug(String(repeating: "-", count: 50))
     }
     
-    // Output consolidated JSON
-    var json = """
-    {
-      "title" : "\(escapeJSON(bookTitle))",
-      "content" : "\(escapeJSON(consolidatedContent))",
-      "words_count" : \(totalWords),
-      "chars_count" : \(totalChars),
-      "extraction_time_ms" : \(totalElapsedTime),
-      "language" : "\(escapeJSON(detectedLanguage))"
-    """
+    // Create BookContent object
+    let bookContent = BookContent(
+        title: bookTitle,
+        total_chars_count: totalChars,
+        total_word_count: totalWords,
+        extraction_time_ms: totalElapsedTime,
+        language: detectedLanguage,
+        content: chapters
+    )
     
-    // Add chapter-title if present
-    if let chapterTitle = firstChapterTitle {
-        json += ",\n  \"chapter-title\" : \"\(escapeJSON(chapterTitle))\""
+    // Output JSON using Codable
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    
+    do {
+        let jsonData = try encoder.encode(bookContent)
+        if let jsonString = String(data: jsonData, encoding: .utf8) {
+            if let outputPath = outputFile {
+                // Write to file
+                let fileURL = URL(fileURLWithPath: outputPath)
+                try jsonString.write(to: fileURL, atomically: true, encoding: .utf8)
+                printDebug("✅ JSON saved to: \(outputPath)")
+                print("Successfully saved to: \(outputPath)")
+            } else {
+                // Print to stdout
+                print(jsonString)
+            }
+        }
+    } catch {
+        printDebug("Error encoding/saving JSON: \(error)")
+        exit(1)
     }
-    
-    json += "\n}"
-    print(json)
     
     // Speak the content if requested
     if speakMode {
-        speakText(consolidatedContent, language: detectedLanguage, title: bookTitle)
+        let allContent = chapters.map { $0.chapter_content }.joined(separator: "\n\n")
+        speakText(allContent, language: detectedLanguage, title: bookTitle)
     }
     
     exit(0)
@@ -587,6 +824,16 @@ func printDebug(_ message: String) {
     if debugMode {
         fputs(message + "\n", stderr)
     }
+}
+
+/// Calculate word count for a text
+func wordCount(_ text: String) -> Int {
+    return text.split(separator: " ").count
+}
+
+/// Calculate character count for a text
+func charCount(_ text: String) -> Int {
+    return text.count
 }
 
 /// Escape string for JSON
