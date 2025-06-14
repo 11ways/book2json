@@ -48,6 +48,7 @@ struct PageContent: Codable {
 var debugMode = false
 var speakMode = false
 var startTime = Date()
+var pagesToExtract = 1
 
 // MARK: - Process Management
 
@@ -349,6 +350,39 @@ func extractPageContent(from window: AXUIElement, extractionTime: Int) -> PageCo
     return nil
 }
 
+// MARK: - Navigation
+
+/// Navigate to next page using AppleScript
+func navigateToNextPage(_ window: AXUIElement) -> Bool {
+    printDebug("Navigating to next page using AppleScript...")
+    
+    let script = """
+    tell application "Books"
+        activate
+    end tell
+    tell application "System Events"
+        tell process "Books"
+            key code 124
+        end tell
+    end tell
+    """
+    
+    var error: NSDictionary?
+    if let scriptObject = NSAppleScript(source: script) {
+        scriptObject.executeAndReturnError(&error)
+        if error != nil {
+            printDebug("AppleScript error: \(error!)")
+            return false
+        } else {
+            printDebug("Sent arrow right via AppleScript")
+            return true
+        }
+    }
+    
+    printDebug("Failed to execute AppleScript")
+    return false
+}
+
 // MARK: - Main Execution
 
 func main() {
@@ -359,6 +393,15 @@ func main() {
     let args = CommandLine.arguments
     debugMode = args.contains("debug")
     speakMode = args.contains("--speak")
+    
+    // Parse --pages argument
+    if let pagesIndex = args.firstIndex(of: "--pages"),
+       pagesIndex + 1 < args.count,
+       let pages = Int(args[pagesIndex + 1]),
+       pages > 0 {
+        pagesToExtract = pages
+        printDebug("Will extract \(pagesToExtract) page(s)")
+    }
     
     // Setup
     if debugMode {
@@ -431,62 +474,110 @@ func main() {
     printDebug("📚 Found \(windowArray.count) window(s)")
     printDebug("")
     
-    // Process each window
-    for (index, window) in windowArray.enumerated() {
-        printDebug("Processing window \(index + 1)...")
+    // Process the first window (main book window)
+    guard let mainWindow = windowArray.first else {
+        printDebug("❌ No windows found")
+        exit(1)
+    }
+    
+    // Variables to collect content from all pages
+    var allPageContents: [String] = []
+    var bookTitle = "Unknown"
+    var firstChapterTitle: String? = nil
+    var totalWords = 0
+    var totalChars = 0
+    var detectedLanguage = "unknown"
+    
+    // Extract content from multiple pages
+    for pageNumber in 1...pagesToExtract {
+        printDebug("Extracting page \(pageNumber) of \(pagesToExtract)...")
         
         // Calculate elapsed time since start
         let elapsedTime = Int(Date().timeIntervalSince(startTime) * 1000)
         
-        if let pageContent = extractPageContent(from: window, extractionTime: elapsedTime) {
+        if let pageContent = extractPageContent(from: mainWindow, extractionTime: elapsedTime) {
+            // Store content
+            allPageContents.append(pageContent.content)
+            
+            // Update metadata from first page
+            if pageNumber == 1 {
+                bookTitle = pageContent.title
+                firstChapterTitle = pageContent.chapter_title
+                detectedLanguage = pageContent.language
+            }
+            
+            // Accumulate stats
+            totalWords += pageContent.words_count
+            totalChars += pageContent.chars_count
+            
             if debugMode {
-                printDebug("\n✅ Successfully extracted page content!")
-                printDebug(String(repeating: "-", count: 50))
-                printDebug("\nExtracted \(pageContent.words_count) words from: \(pageContent.title)")
-                if let chapterTitle = pageContent.chapter_title {
-                    printDebug("Chapter title: \(chapterTitle)")
+                printDebug("✅ Extracted page \(pageNumber): \(pageContent.words_count) words")
+            }
+            
+            // Navigate to next page if not the last page
+            if pageNumber < pagesToExtract {
+                let navSuccess = navigateToNextPage(mainWindow)
+                if !navSuccess {
+                    printDebug("Warning: Navigation might have failed")
                 }
-                printDebug("Detected language: \(pageContent.language)")
-                printDebug("Processing time: \(pageContent.extraction_time_ms) ms")
-                printDebug(String(repeating: "-", count: 50))
+                // Wait for page transition
+                Thread.sleep(forTimeInterval: 0.5)
             }
-            
-            // Output JSON to stdout with consistent ordering
-            // Build JSON manually to ensure consistent property order
-            var json = """
-            {
-              "title" : "\(escapeJSON(pageContent.title))",
-              "content" : "\(escapeJSON(pageContent.content))",
-              "words_count" : \(pageContent.words_count),
-              "chars_count" : \(pageContent.chars_count),
-              "extraction_time_ms" : \(pageContent.extraction_time_ms),
-              "language" : "\(escapeJSON(pageContent.language))"
-            """
-            
-            // Add chapter-title if present
-            if let chapterTitle = pageContent.chapter_title {
-                json += ",\n  \"chapter-title\" : \"\(escapeJSON(chapterTitle))\""
-            }
-            
-            json += "\n}"
-            print(json)
-            
-            // Speak the content if requested
-            if speakMode {
-                speakText(pageContent.content, language: pageContent.language, title: pageContent.title)
-            }
-            
-            // Exit after first successful extraction
-            exit(0)
+        } else {
+            printDebug("❌ Failed to extract page \(pageNumber)")
+            break
         }
     }
     
-    printDebug("\n❌ Could not extract page content from any window.")
-    printDebug("Make sure:")
-    printDebug("  1. You have a book open in Books")
-    printDebug("  2. The book content is visible on screen")
-    printDebug("  3. Terminal has Accessibility permissions")
-    exit(1)
+    // Check if we extracted any content
+    if allPageContents.isEmpty {
+        printDebug("\n❌ Could not extract any page content.")
+        printDebug("Make sure:")
+        printDebug("  1. You have a book open in Books")
+        printDebug("  2. The book content is visible on screen")
+        printDebug("  3. Terminal has Accessibility permissions")
+        exit(1)
+    }
+    
+    // Consolidate all pages
+    let consolidatedContent = allPageContents.joined(separator: "\n\n")
+    let totalElapsedTime = Int(Date().timeIntervalSince(startTime) * 1000)
+    
+    if debugMode {
+        printDebug("\n✅ Successfully extracted \(allPageContents.count) page(s)!")
+        printDebug(String(repeating: "-", count: 50))
+        printDebug("Total words: \(totalWords)")
+        printDebug("Total characters: \(totalChars)")
+        printDebug("Language: \(detectedLanguage)")
+        printDebug("Total processing time: \(totalElapsedTime) ms")
+        printDebug(String(repeating: "-", count: 50))
+    }
+    
+    // Output consolidated JSON
+    var json = """
+    {
+      "title" : "\(escapeJSON(bookTitle))",
+      "content" : "\(escapeJSON(consolidatedContent))",
+      "words_count" : \(totalWords),
+      "chars_count" : \(totalChars),
+      "extraction_time_ms" : \(totalElapsedTime),
+      "language" : "\(escapeJSON(detectedLanguage))"
+    """
+    
+    // Add chapter-title if present
+    if let chapterTitle = firstChapterTitle {
+        json += ",\n  \"chapter-title\" : \"\(escapeJSON(chapterTitle))\""
+    }
+    
+    json += "\n}"
+    print(json)
+    
+    // Speak the content if requested
+    if speakMode {
+        speakText(consolidatedContent, language: detectedLanguage, title: bookTitle)
+    }
+    
+    exit(0)
 }
 
 // MARK: - Utilities
@@ -526,9 +617,17 @@ func findBestVoice(for language: String) -> AVSpeechSynthesisVoice? {
     let languageVoices = allVoices.filter { $0.language.hasPrefix(language) }
     
     // First, try to find a Siri voice (premium quality)
-    if let siriVoice = languageVoices.first(where: { $0.quality == .premium || $0.name.contains("Siri") }) {
-        printDebug("Found Siri voice: \(siriVoice.name) for language: \(language)")
-        return siriVoice
+    if #available(macOS 13.0, *) {
+        if let siriVoice = languageVoices.first(where: { $0.quality == .premium || $0.name.contains("Siri") }) {
+            printDebug("Found Siri voice: \(siriVoice.name) for language: \(language)")
+            return siriVoice
+        }
+    } else {
+        // For older macOS versions, just check for Siri in name
+        if let siriVoice = languageVoices.first(where: { $0.name.contains("Siri") }) {
+            printDebug("Found Siri voice: \(siriVoice.name) for language: \(language)")
+            return siriVoice
+        }
     }
     
     // Then try enhanced quality
