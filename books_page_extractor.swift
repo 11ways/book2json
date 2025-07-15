@@ -663,20 +663,17 @@ func main() {
             // Check for duplicate content
             if pageContent.content == previousPageContent {
                 duplicateCount += 1
-                printDebug("⚠️  Duplicate content detected (occurrence #\(duplicateCount))")
+                printDebug("⚠️  Duplicate content detected (occurrence #\(duplicateCount)/10)")
                 
-                // If we get duplicate content, it likely means we've reached the end of the book
-                // or navigation isn't working
-                if duplicateCount >= 2 {
-                    printDebug("🛑 Stopping extraction: Multiple duplicate pages detected")
+                // If we get 10 consecutive duplicate pages, stop extraction
+                if duplicateCount >= 10 {
+                    printDebug("🛑 Stopping extraction: 10 consecutive duplicate pages detected")
                     printDebug("   (Likely reached end of book or navigation failure)")
                     break
                 }
                 
-                // Try one more time with a longer delay
-                printDebug("   Retrying with longer delay...")
-                Thread.sleep(forTimeInterval: pageTransitionDelay * 2)
-                continue
+                // Continue with navigation for empty pages or temporary issues
+                printDebug("   Continuing extraction (may be empty page)...")
             } else {
                 // Reset duplicate count if we get new content
                 duplicateCount = 0
