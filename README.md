@@ -1,6 +1,10 @@
-# Apple Books Page Content Extractor
-
-A Swift tool that uses macOS Accessibility APIs to extract page content from the Apple Books application. It can extract single or multiple pages, detect chapters, and export content to JSON or audio formats.
+<div align="center">
+  <img src="icon.png" alt="book2json Icon" width="128" height="128">
+  
+  # book2json
+  
+  A Swift tool that uses macOS Accessibility APIs to extract page content from the Apple Books application. It can extract single or multiple pages, detect chapters, and export content to JSON or audio formats.
+</div>
 
 ## Requirements
 
@@ -25,15 +29,15 @@ Before using this tool, you need to grant Terminal (or iTerm) accessibility perm
 
 #### Quick Build (Current Architecture)
 ```bash
-swiftc books_page_extractor.swift -o books_page_extractor
+swiftc book2json.swift -o book2json
 ```
 
 #### Universal Binary Build (Intel + Apple Silicon)
 ```bash
-./build_books_extractor.sh
+./build_book2json.sh
 ```
 
-The `build_books_extractor.sh` script performs the following steps:
+The `build_book2json.sh` script performs the following steps:
 1. **Validates Environment**: Checks that the source file exists
 2. **Cleans Previous Builds**: Removes any existing binaries
 3. **Compiles for Intel (x86_64)**: Targets macOS 10.15+ for Intel Macs
@@ -48,34 +52,34 @@ The `build_books_extractor.sh` script performs the following steps:
 
 ```bash
 # Extract single page (default)
-./books_page_extractor
+./book2json
 
 # Extract content and save to file
-./books_page_extractor --output book.json
+./book2json --output book.json
 ```
 
 ### Command Line Options
 
 | Option | Description | Example |
 |--------|-------------|---------|
-| `--pages N` | Extract N pages from the book | `./books_page_extractor --pages 10` |
-| `--delay MS` | Set delay between page turns in milliseconds (default: 300) | `./books_page_extractor --pages 5 --delay 500` |
-| `--output FILE` | Save JSON output to file instead of stdout | `./books_page_extractor --output chapter1.json` |
-| `--speak` | Generate audio file from extracted content | `./books_page_extractor --speak` |
-| `debug` | Enable debug mode with diagnostic output | `./books_page_extractor debug` |
-| `--diagnostic` | Deep diagnostic mode for troubleshooting | `./books_page_extractor --diagnostic` |
+| `--pages N` | Extract N pages from the book | `./book2json --pages 10` |
+| `--delay MS` | Set delay between page turns in milliseconds (default: 300) | `./book2json --pages 5 --delay 500` |
+| `--output FILE` | Save JSON output to file instead of stdout | `./book2json --output chapter1.json` |
+| `--speak` | Generate audio file from extracted content | `./book2json --speak` |
+| `debug` | Enable debug mode with diagnostic output | `./book2json debug` |
+| `--diagnostic` | Deep diagnostic mode for troubleshooting | `./book2json --diagnostic` |
 
 ### Advanced Examples
 
 ```bash
 # Extract entire chapter (10 pages) with custom delay
-./books_page_extractor --pages 10 --delay 500 --output chapter.json
+./book2json --pages 10 --delay 500 --output chapter.json
 
 # Extract and generate audio with debug info
-./books_page_extractor debug --pages 5 --speak
+./book2json debug --pages 5 --speak
 
 # Diagnostic mode to inspect UI hierarchy
-./books_page_extractor --diagnostic
+./book2json --diagnostic
 ```
 
 ### Multi-Page Extraction
@@ -180,8 +184,8 @@ If the tool doesn't work:
 
 ## Files
 
-- `books_page_extractor.swift` - Main Swift source code
-- `build_books_extractor.sh` - Build script for universal binary
+- `book2json.swift` - Main Swift source code
+- `build_book2json.sh` - Build script for universal binary
 - `find_books_info.swift` - Helper script to find Books app information
 
 ## Notes

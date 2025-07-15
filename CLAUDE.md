@@ -4,35 +4,35 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This repository contains tools for extracting content from Apple Books using macOS Accessibility APIs. The main component is a Swift-based page extractor that can read book content, detect chapters, and export to JSON or audio formats.
+This repository contains tools for extracting content from Apple Books using macOS Accessibility APIs. The main component is book2json, a Swift-based tool that can read book content, detect chapters, and export to JSON or audio formats.
 
 ## Build Commands
 
 ```bash
 # Quick build (current architecture only)
-swiftc books_page_extractor.swift -o books_page_extractor
+swiftc book2json.swift -o book2json
 
 # Universal binary build (Intel + Apple Silicon)
-./build_books_extractor.sh
+./build_book2json.sh
 ```
 
 ## Common Usage
 
 ```bash
 # Extract single page
-./books_page_extractor
+./book2json
 
 # Extract multiple pages
-./books_page_extractor --pages 10
+./book2json --pages 10
 
 # Debug mode with diagnostics
-./books_page_extractor debug
+./book2json debug
 
 # Generate audio file
-./books_page_extractor --speak
+./book2json --speak
 
 # Save to file
-./books_page_extractor --output book_content.json
+./book2json --output book_content.json
 ```
 
 ## Architecture
