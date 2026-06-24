@@ -23,5 +23,9 @@ claude.md
 
 # Build artifacts
 book2json
+books_page_extractor
 /build/
 *.dSYM/
+
+# Screenshots / scratch images
+[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]_*.png

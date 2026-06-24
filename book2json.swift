@@ -57,19 +57,22 @@ struct ExtractorConfiguration {
     let speakMode: Bool
     let diagnosticMode: Bool
     let pagesToExtract: Int
+    let extractAll: Bool
     let pageTransitionDelay: TimeInterval
     let outputFile: String?
     let startTime: Date
-    
+
     static func parse(from arguments: [String]) -> ExtractorConfiguration {
         let debugMode = arguments.contains("debug")
         let diagnosticMode = arguments.contains("--diagnostic")
-        
+        let extractAll = arguments.contains("--all")
+
         return ExtractorConfiguration(
             debugMode: debugMode || diagnosticMode,
             speakMode: arguments.contains("--speak"),
             diagnosticMode: diagnosticMode,
-            pagesToExtract: parsePages(from: arguments) ?? 1,
+            pagesToExtract: extractAll ? Int.max : (parsePages(from: arguments) ?? 1),
+            extractAll: extractAll,
             pageTransitionDelay: parseDelay(from: arguments) ?? 0.3,
             outputFile: parseOutput(from: arguments),
             startTime: Date()
@@ -452,6 +455,92 @@ func extractTextFromElement(_ element: AXUIElement, depth: Int = 0, maxDepth: In
     return texts
 }
 
+/// Choose the Books window most likely to contain a book. Books may show
+/// auxiliary windows (Search, Library, popovers); picking `windows.first`
+/// silently grabs the wrong one when one of those is ordered first.
+///
+/// Strategy: prefer a window whose tree exposes a content area with real
+/// text. Fall back to any non-dialog window, then to the first window.
+func selectBookWindow(_ windows: [AXUIElement]) -> AXUIElement? {
+    for window in windows {
+        if findBooksContentArea(window) != nil {
+            return window
+        }
+    }
+    for window in windows {
+        var subrole: CFTypeRef?
+        AXUIElementCopyAttributeValue(window, kAXSubroleAttribute as CFString, &subrole)
+        if (subrole as? String) != "AXDialog" {
+            return window
+        }
+    }
+    return windows.first
+}
+
+/// Find the first N AXStaticText elements anywhere under `root` and dump
+/// every attribute they expose. Used by `--diagnostic` to investigate
+/// whether Books exposes typography metadata (font, size, style) that we
+/// could use as a chapter-heading signal beyond `AXHeading`.
+func dumpStaticTextSamples(_ root: AXUIElement, sampleCount: Int = 8) {
+    var collected: [AXUIElement] = []
+
+    // Depth-first walk matches the rest of the extractor and seems to
+    // trigger Books' lazy AX tree expansion (BFS does not).
+    func recurse(_ element: AXUIElement, depth: Int) {
+        if collected.count >= sampleCount || depth > 20 { return }
+
+        var role: CFTypeRef?
+        AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role)
+        if (role as? String) == "AXStaticText" {
+            collected.append(element)
+            if collected.count >= sampleCount { return }
+        }
+
+        var children: CFTypeRef?
+        if AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &children) == .success,
+           let kids = children as? [AXUIElement] {
+            for child in kids {
+                recurse(child, depth: depth + 1)
+                if collected.count >= sampleCount { return }
+            }
+        }
+    }
+    recurse(root, depth: 0)
+
+    logDebug("\nAXStaticText samples (collected \(collected.count) of first \(sampleCount)):")
+    logDebug(String(repeating: "-", count: 60))
+
+    for (i, element) in collected.enumerated() {
+        logDebug("\nSample \(i):")
+        var attrs: CFArray?
+        guard AXUIElementCopyAttributeNames(element, &attrs) == .success,
+              let names = attrs as? [String] else { continue }
+
+        for name in names.sorted() {
+            var value: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success else { continue }
+
+            let rendered: String
+            if let s = value as? String {
+                rendered = s.count > 200 ? String(s.prefix(200)) + "..." : s
+            } else if let n = value as? NSNumber {
+                rendered = n.description
+            } else if let dict = value as? [String: Any] {
+                rendered = "Dict\(dict)"
+            } else if let arr = value as? [Any] {
+                rendered = "Array[\(arr.count)]"
+            } else if value != nil {
+                rendered = "[\(type(of: value!))]"
+            } else {
+                continue
+            }
+            if !rendered.isEmpty {
+                logDebug("  \(name): \(rendered)")
+            }
+        }
+    }
+}
+
 /// Searches the accessibility hierarchy for the main content area of Books app.
 /// 
 /// The Books app typically structures its content in either:
@@ -615,6 +704,254 @@ func navigateToNextPage(_ window: AXUIElement) -> Bool {
     return false
 }
 
+// MARK: - Page Position
+
+/// Walk the accessibility tree looking for the Books navigation slider, which
+/// exposes the reader's position within the book as `(value, min, max)`.
+func findPagePosition(_ window: AXUIElement) -> (current: Double, min: Double, max: Double)? {
+    var queue: [AXUIElement] = [window]
+    var visited = 0
+    let maxVisited = 400
+
+    while !queue.isEmpty && visited < maxVisited {
+        let element = queue.removeFirst()
+        visited += 1
+
+        var role: CFTypeRef?
+        AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role)
+
+        if (role as? String) == "AXSlider" {
+            var v: CFTypeRef?
+            var minV: CFTypeRef?
+            var maxV: CFTypeRef?
+            AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &v)
+            AXUIElementCopyAttributeValue(element, kAXMinValueAttribute as CFString, &minV)
+            AXUIElementCopyAttributeValue(element, kAXMaxValueAttribute as CFString, &maxV)
+            if let cur = (v as? NSNumber)?.doubleValue,
+               let mn = (minV as? NSNumber)?.doubleValue,
+               let mx = (maxV as? NSNumber)?.doubleValue,
+               mx > mn {
+                return (cur, mn, mx)
+            }
+        }
+
+        var children: CFTypeRef?
+        if AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &children) == .success,
+           let kids = children as? [AXUIElement] {
+            queue.append(contentsOf: kids)
+        }
+    }
+    return nil
+}
+
+/// Send a single left-arrow keystroke to Books to navigate one page back.
+func navigateToPreviousPage() -> Bool {
+    let script = """
+    tell application "Books" to activate
+    tell application "System Events"
+        tell process "Books"
+            key code 123
+        end tell
+    end tell
+    """
+    if let s = NSAppleScript(source: script) {
+        var err: NSDictionary?
+        s.executeAndReturnError(&err)
+        return err == nil
+    }
+    return false
+}
+
+/// Try a fast slider-write rewind. Returns true only if the slider was
+/// found, written successfully, and the read-back confirms we landed
+/// near the start. Returns false (caller should fall back) otherwise.
+func sliderRewind(window: AXUIElement) -> Bool {
+    var queue: [AXUIElement] = [window]
+    var visited = 0
+    let maxVisited = 400
+
+    while !queue.isEmpty, visited < maxVisited {
+        let element = queue.removeFirst()
+        visited += 1
+
+        var role: CFTypeRef?
+        AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role)
+
+        if (role as? String) == "AXSlider" {
+            var minV: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(element, kAXMinValueAttribute as CFString, &minV) == .success,
+                  let mn = minV as? NSNumber else { return false }
+
+            if AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, mn) != .success {
+                return false
+            }
+            Thread.sleep(forTimeInterval: 0.4)
+            if let pos = findPagePosition(window) {
+                let range = pos.max - pos.min
+                let normalized = range > 0 ? (pos.current - pos.min) / range : 0
+                return normalized < 0.01
+            }
+            return false
+        }
+
+        var children: CFTypeRef?
+        if AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &children) == .success,
+           let kids = children as? [AXUIElement] {
+            queue.append(contentsOf: kids)
+        }
+    }
+    return false
+}
+
+/// Rewind by repeatedly sending left-arrow keystrokes until extraction
+/// content stops changing — i.e. we've hit the start of the book.
+/// Slower than slider-write but doesn't require the navigation chrome
+/// to be in the AX tree.
+func keystrokeRewind(window: AXUIElement, maxPresses: Int = 500) -> Bool {
+    var lastContent = ""
+    var stableCount = 0
+
+    for press in 0..<maxPresses {
+        _ = navigateToPreviousPage()
+        Thread.sleep(forTimeInterval: 0.18)
+
+        let elapsed = Int(Date().timeIntervalSince(globalConfig.startTime) * 1000)
+        let content = extractPageContent(from: window, extractionTime: elapsed)?.content ?? ""
+
+        if content == lastContent {
+            stableCount += 1
+            if stableCount >= 3 {
+                logDebug("⏮  Reached start after ~\(press - 1) left-arrows")
+                return true
+            }
+        } else {
+            stableCount = 0
+            lastContent = content
+        }
+    }
+    logDebug("⚠️  Hit keystroke rewind cap (\(maxPresses)) without stabilising")
+    return false
+}
+
+/// Rewind Books to the start of the current book. Tries a fast slider
+/// write first; falls back to repeated left-arrow keystrokes when the
+/// navigation chrome isn't in the AX tree (Books hides it during
+/// reading).
+func rewindToStart(window: AXUIElement) -> Bool {
+    if sliderRewind(window: window) {
+        logDebug("⏮  Rewound via slider write")
+        return true
+    }
+    logDebug("Slider rewind unavailable; using keystroke rewind...")
+    return keystrokeRewind(window: window)
+}
+
+/// After navigation, poll the navigation slider until its value changes,
+/// proving the page actually advanced. Returns true if the page changed.
+///
+/// Uses a tight 50ms polling interval so fast pages turn quickly, with a
+/// generous deadline (max(--delay × 5, 3s)) to tolerate slow machines or
+/// heavy pages. If no slider is found, falls back to the configured
+/// `pageTransitionDelay` and assumes success — the duplicate-content
+/// detector remains as a backup.
+func waitForPageAdvance(window: AXUIElement, beforePosition: Double?) -> Bool {
+    guard let beforePos = beforePosition else {
+        Thread.sleep(forTimeInterval: globalConfig.pageTransitionDelay)
+        return true
+    }
+
+    let pollInterval: TimeInterval = 0.05
+    let maxWait = max(globalConfig.pageTransitionDelay * 5, 3.0)
+    let deadline = Date().addingTimeInterval(maxWait)
+
+    while Date() < deadline {
+        Thread.sleep(forTimeInterval: pollInterval)
+        if let now = findPagePosition(window)?.current,
+           abs(now - beforePos) > 0.0001 {
+            // Slider moved; brief settle so new-page text is fully rendered.
+            Thread.sleep(forTimeInterval: 0.05)
+            return true
+        }
+    }
+    return false
+}
+
+/// Advance the book until extraction yields substantial text. Skips
+/// covers, copyright/blank pages, and section dividers so extraction
+/// (or the diagnostic) starts on real body text. No-op when the current
+/// page is already substantive. Caps at `maxSkips` to avoid runaway.
+@discardableResult
+func advancePastMinimalPages(window: AXUIElement, maxSkips: Int = 20, minChars: Int = 50) -> Bool {
+    for attempt in 0..<maxSkips {
+        let elapsed = Int(Date().timeIntervalSince(globalConfig.startTime) * 1000)
+        let charCount = extractPageContent(from: window, extractionTime: elapsed)?.content.count ?? 0
+
+        if charCount >= minChars {
+            if attempt > 0 {
+                logDebug("✅ Reached body text after skipping \(attempt) cover/blank page(s)")
+            }
+            return true
+        }
+
+        logDebug("⏭  Page has only \(charCount) char(s); advancing past cover/divider...")
+        let beforePos = findPagePosition(window)?.current
+        _ = navigateToNextPage(window)
+        if !waitForPageAdvance(window: window, beforePosition: beforePos) {
+            logDebug("⚠️  Page didn't advance during skip; giving up")
+            return false
+        }
+    }
+
+    logDebug("⚠️  Did not reach a body page after \(maxSkips) advance attempts")
+    return false
+}
+
+/// Multi-page extractions always start from page 1. If Books isn't there,
+/// attempt an automatic rewind via the navigation slider; if that fails,
+/// fall back to a TTY prompt asking the user to rewind manually. Silent
+/// when the slider isn't found or extraction is single-page.
+func confirmStartPosition(_ window: AXUIElement) {
+    guard globalConfig.pagesToExtract > 1 else { return }
+
+    var position = findPagePosition(window)
+    if position == nil {
+        // Books hides the navigation chrome (and its slider) until there's
+        // an interaction. Send a single nav key to wake it, then retry.
+        _ = navigateToNextPage(window)
+        Thread.sleep(forTimeInterval: 0.6)
+        position = findPagePosition(window)
+    }
+
+    guard let position = position else {
+        logDebug("Could not detect current page position; skipping start-of-book check")
+        return
+    }
+
+    let range = position.max - position.min
+    let normalized = range > 0 ? (position.current - position.min) / range : 0
+    if normalized < 0.01 { return }
+
+    let percent = Int((normalized * 100).rounded())
+    fputs("⚠️  Books is currently ~\(percent)% through the book; rewinding to the start...\n", stderr)
+
+    if rewindToStart(window: window) {
+        fputs("✅ Rewound to start.\n", stderr)
+        return
+    }
+
+    fputs("❌ Could not rewind automatically.\n", stderr)
+
+    if isatty(fileno(stdin)) == 0 {
+        fputs("    Proceeding from current position because stdin is not a terminal.\n", stderr)
+        return
+    }
+
+    fputs("    Rewind manually in Books, then press Enter to continue (or 'c' to extract from here): ", stderr)
+    let response = (readLine() ?? "").trimmingCharacters(in: .whitespaces).lowercased()
+    if response == "c" || response == "continue" { return }
+    // User pressed Enter — assume they rewound. Carry on.
+}
+
 // MARK: - Main Execution
 
 /// Main entry point for the Books Page Content Extractor.
@@ -643,7 +980,11 @@ func main() {
         if globalConfig.speakMode {
             logDebug("Speech mode enabled")
         }
-        logDebug("Will extract \(globalConfig.pagesToExtract) page(s)")
+        if globalConfig.extractAll {
+            logDebug("Will extract pages until end of book")
+        } else {
+            logDebug("Will extract \(globalConfig.pagesToExtract) page(s)")
+        }
         logDebug("Page transition delay: \(Int(globalConfig.pageTransitionDelay * 1000))ms")
         if let outputFile = globalConfig.outputFile {
             logDebug("Output will be saved to: \(outputFile)")
@@ -725,14 +1066,24 @@ func main() {
     logDebug("📚 Found \(windowArray.count) window(s)")
     logDebug("")
     
-    // Process the first window (main book window)
-    guard let mainWindow = windowArray.first else {
+    // Pick the window that actually contains the book (skip Search dialogs etc.)
+    guard let mainWindow = selectBookWindow(windowArray) else {
         logDebug("❌ No windows found")
         exit(1)
     }
     
     // If diagnostic mode, explore accessibility tree and exit
     if globalConfig.diagnosticMode {
+        // Foreground Books so its accessibility tree is fully populated;
+        // when Books is in the background, AXChildren is largely empty.
+        if let activate = NSAppleScript(source: "tell application \"Books\" to activate") {
+            activate.executeAndReturnError(nil)
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+
+        // Skip past the cover so we have real body text to inspect.
+        advancePastMinimalPages(window: mainWindow)
+
         logDebug("🔍 DIAGNOSTIC MODE: Exploring accessibility attributes")
         logDebug(String(repeating: "=", count: 60))
         logDebug("\nWindow-level attributes:")
@@ -743,8 +1094,14 @@ func main() {
             logDebug("\n✅ Found content area! Exploring its attributes:")
             logDebug(String(repeating: "-", count: 60))
             exploreAccessibilityAttributes(contentArea, maxDepth: 3)
+
+            logDebug("\n\nSampling AXStaticText elements under content area:")
+            logDebug(String(repeating: "-", count: 60))
+            dumpStaticTextSamples(contentArea, sampleCount: 12)
         } else {
             logDebug("\n❌ Could not find specific content area")
+            logDebug("\nSampling AXStaticText elements under the window instead:")
+            dumpStaticTextSamples(mainWindow, sampleCount: 12)
         }
         
         logDebug("\n\nApplication-level attributes:")
@@ -755,6 +1112,21 @@ func main() {
         exit(0)
     }
     
+    // Foreground Books so its accessibility tree (including the
+    // navigation slider) is populated. confirmStartPosition and
+    // advancePastMinimalPages both depend on the slider; without
+    // activation Books often returns an empty tree.
+    if let activate = NSAppleScript(source: "tell application \"Books\" to activate") {
+        activate.executeAndReturnError(nil)
+        Thread.sleep(forTimeInterval: 0.8)
+    }
+
+    // Confirm/auto-rewind to the start of the book if Books isn't there.
+    confirmStartPosition(mainWindow)
+
+    // Skip cover/blank/divider pages so extraction starts on body text.
+    advancePastMinimalPages(window: mainWindow)
+
     // Variables to collect content from all pages
     var chapters: [Chapter] = []
     var currentChapterTitle: String? = nil
@@ -768,82 +1140,104 @@ func main() {
     
     // Extract content from multiple pages
     for pageNumber in 1...globalConfig.pagesToExtract {
-        logDebug("Extracting page \(pageNumber) of \(globalConfig.pagesToExtract)...")
+        let totalLabel = globalConfig.extractAll ? "?" : "\(globalConfig.pagesToExtract)"
+        logDebug("Extracting page \(pageNumber) of \(totalLabel)...")
         
         // Calculate elapsed time since start
         let elapsedTime = Int(Date().timeIntervalSince(globalConfig.startTime) * 1000)
-        
-        if let pageContent = extractPageContent(from: mainWindow, extractionTime: elapsedTime) {
-            // Check for duplicate content
-            if pageContent.content == previousPageContent {
+
+        var pageContent = extractPageContent(from: mainWindow, extractionTime: elapsedTime)
+
+        // Render-race recovery: the slider failsafe guarantees the page
+        // advanced, but Books sometimes hasn't repainted text yet by the
+        // time we extract. If we got the prior page's content back, give
+        // it another beat and re-extract once.
+        if let pc = pageContent,
+           previousPageContent != nil,
+           pc.content == previousPageContent {
+            logDebug("⏳  Got stale text after page advance; re-extracting...")
+            Thread.sleep(forTimeInterval: 0.25)
+            let elapsedRetry = Int(Date().timeIntervalSince(globalConfig.startTime) * 1000)
+            if let retry = extractPageContent(from: mainWindow, extractionTime: elapsedRetry) {
+                pageContent = retry
+            }
+        }
+
+        if let pageContent = pageContent {
+            let isDuplicate = (pageContent.content == previousPageContent)
+
+            if isDuplicate {
+                // Backup safety net: only fires when the slider-based failsafe
+                // below is unavailable (no slider in tree). Don't append or
+                // double-count duplicate content.
                 duplicateCount += 1
                 logDebug("⚠️  Duplicate content detected (occurrence #\(duplicateCount)/10)")
-                
-                // If we get 10 consecutive duplicate pages, stop extraction
                 if duplicateCount >= 10 {
                     logDebug("🛑 Stopping extraction: 10 consecutive duplicate pages detected")
                     logDebug("   (Likely reached end of book or navigation failure)")
                     break
                 }
-                
-                // Continue with navigation for empty pages or temporary issues
-                logDebug("   Continuing extraction (may be empty page)...")
             } else {
-                // Reset duplicate count if we get new content
                 duplicateCount = 0
-            }
-            
-            // Store current content for next comparison
-            previousPageContent = pageContent.content
-            
-            // Update metadata from first page
-            if pageNumber == 1 {
-                bookTitle = pageContent.title
-                detectedLanguage = pageContent.language
-                currentChapterTitle = pageContent.chapterTitle
-            }
-            
-            // Check if we've entered a new chapter
-            if pageContent.chapterTitle != nil && pageContent.chapterTitle != currentChapterTitle {
-                // Save the previous chapter if it has content
-                if !currentChapterContent.isEmpty {
-                    let chapterText = currentChapterContent.joined(separator: "\n\n")
-                    let titleText = currentChapterTitle ?? ""
-                    let combinedText = titleText + " " + chapterText
-                    chapters.append(Chapter(
-                        chapterTitle: currentChapterTitle,
-                        chapterContent: chapterText,
-                        charactersCount: characterCount(combinedText),
-                        wordCount: wordCount(combinedText)
-                    ))
-                    currentChapterContent = []
+                previousPageContent = pageContent.content
+
+                // Update metadata from first page
+                if pageNumber == 1 {
+                    bookTitle = pageContent.title
+                    detectedLanguage = pageContent.language
+                    currentChapterTitle = pageContent.chapterTitle
                 }
-                currentChapterTitle = pageContent.chapterTitle
-                logDebug("📖 New chapter detected: \(currentChapterTitle ?? "Untitled")")
-            }
-            
-            // Add page content to current chapter
-            currentChapterContent.append(pageContent.content)
-            
-            // Accumulate stats
-            totalWords += pageContent.wordsCount
-            totalChars += pageContent.charactersCount
-            
-            if globalConfig.debugMode {
-                logDebug("✅ Extracted page \(pageNumber): \(pageContent.wordsCount) words")
-                if let chapterTitle = pageContent.chapterTitle {
-                    logDebug("   Chapter: \(chapterTitle)")
+
+                // Check if we've entered a new chapter
+                if pageContent.chapterTitle != nil && pageContent.chapterTitle != currentChapterTitle {
+                    if !currentChapterContent.isEmpty {
+                        let chapterText = currentChapterContent.joined(separator: "\n\n")
+                        let titleText = currentChapterTitle ?? ""
+                        let combinedText = titleText + " " + chapterText
+                        chapters.append(Chapter(
+                            chapterTitle: currentChapterTitle,
+                            chapterContent: chapterText,
+                            charactersCount: characterCount(combinedText),
+                            wordCount: wordCount(combinedText)
+                        ))
+                        currentChapterContent = []
+                    }
+                    currentChapterTitle = pageContent.chapterTitle
+                    logDebug("📖 New chapter detected: \(currentChapterTitle ?? "Untitled")")
+                }
+
+                currentChapterContent.append(pageContent.content)
+                totalWords += pageContent.wordsCount
+                totalChars += pageContent.charactersCount
+
+                if globalConfig.debugMode {
+                    logDebug("✅ Extracted page \(pageNumber): \(pageContent.wordsCount) words")
+                    if let chapterTitle = pageContent.chapterTitle {
+                        logDebug("   Chapter: \(chapterTitle)")
+                    }
                 }
             }
-            
-            // Navigate to next page if not the last page
+
+            // Navigate to next page if not the last page, and confirm the
+            // page actually advanced before extracting again.
             if pageNumber < globalConfig.pagesToExtract {
-                let navSuccess = navigateToNextPage(mainWindow)
-                if !navSuccess {
-                    logDebug("Warning: Navigation might have failed")
+                let beforePos = findPagePosition(mainWindow)?.current
+
+                if !navigateToNextPage(mainWindow) {
+                    logDebug("Warning: Navigation send failed")
                 }
-                // Wait for page transition
-                Thread.sleep(forTimeInterval: globalConfig.pageTransitionDelay)
+
+                var advanced = waitForPageAdvance(window: mainWindow, beforePosition: beforePos)
+                if !advanced {
+                    logDebug("⚠️  Page didn't advance; retrying keystroke...")
+                    _ = navigateToNextPage(mainWindow)
+                    advanced = waitForPageAdvance(window: mainWindow, beforePosition: beforePos)
+                }
+
+                if !advanced {
+                    logDebug("🛑 Page failed to advance after retry — stopping (likely end of book)")
+                    break
+                }
             }
         } else {
             logDebug("❌ Failed to extract page \(pageNumber)")
@@ -873,7 +1267,25 @@ func main() {
         logDebug("  3. Terminal has Accessibility permissions")
         exit(1)
     }
-    
+
+    // If AXHeading didn't yield real chapters (one untitled blob), try
+    // a typography-free heuristic on the body text.
+    if chapters.count == 1, chapters[0].chapterTitle == nil {
+        let detected = splitTextIntoChapters(chapters[0].chapterContent)
+        if detected.count > 1 {
+            chapters = detected.map { d in
+                let combined = (d.title ?? "") + " " + d.body
+                return Chapter(
+                    chapterTitle: d.title,
+                    chapterContent: d.body,
+                    charactersCount: characterCount(combined),
+                    wordCount: wordCount(combined)
+                )
+            }
+            logDebug("📖 Heuristic detected \(chapters.count) chapter(s) from untitled body")
+        }
+    }
+
     let totalElapsedTime = Int(Date().timeIntervalSince(globalConfig.startTime) * 1000)
     
     if globalConfig.debugMode {
@@ -930,6 +1342,81 @@ func main() {
     }
     
     exit(0)
+}
+
+// MARK: - Chapter Detection (heuristic)
+
+/// Detect a chapter-title-like line in books whose EPUBs don't expose
+/// proper AXHeading semantics. Tuned for display headings such as
+/// HÈHÈ, OPLETTEN, or POLAR BEAR — short, uppercase-dominant lines that
+/// don't end like a sentence.
+func looksLikeChapterTitle(_ trimmed: String) -> Bool {
+    guard (2...60).contains(trimmed.count) else { return false }
+    if let last = trimmed.last, ".,;:".contains(last) { return false }
+
+    var upper = 0
+    var lower = 0
+    var digits = 0
+    for c in trimmed {
+        if c.isLetter {
+            if c.isUppercase { upper += 1 } else { lower += 1 }
+        } else if c.isNumber {
+            digits += 1
+        }
+    }
+    let letters = upper + lower
+    // Reject digit-heavy lines like "ISBN 978 90 824 3021 9".
+    guard letters >= 3, letters > digits else { return false }
+    return Double(upper) / Double(letters) >= 0.7
+}
+
+/// Walk the joined book text page-by-page (pages are separated by `\n\n`
+/// in our extraction format) and split into chapters where a page begins
+/// with a chapter-title-like line followed by substantive body text.
+/// Front matter before the first detected title becomes a leading
+/// untitled chapter.
+func splitTextIntoChapters(_ text: String) -> [(title: String?, body: String)] {
+    let pages = text.components(separatedBy: "\n\n")
+    var chapters: [(title: String?, body: String)] = []
+    var currentTitle: String? = nil
+    var currentPages: [String] = []
+
+    func flushCurrent() {
+        let body = currentPages.joined(separator: "\n\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if currentTitle != nil || !body.isEmpty {
+            chapters.append((title: currentTitle, body: body))
+        }
+    }
+
+    for page in pages {
+        let lines = page.components(separatedBy: "\n")
+        guard let firstRaw = lines.first else {
+            currentPages.append(page)
+            continue
+        }
+        let firstTrimmed = firstRaw.trimmingCharacters(in: .whitespaces)
+        let restJoined = lines.dropFirst().joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if looksLikeChapterTitle(firstTrimmed) && restJoined.count >= 40 {
+            // Same title two pages in a row = chapter divider followed by
+            // body page that repeats the title. Keep building the same
+            // chapter instead of starting a new (duplicate) one.
+            if firstTrimmed == currentTitle {
+                if !restJoined.isEmpty { currentPages.append(restJoined) }
+            } else {
+                flushCurrent()
+                currentTitle = firstTrimmed
+                currentPages = restJoined.isEmpty ? [] : [restJoined]
+            }
+        } else {
+            currentPages.append(page)
+        }
+    }
+    flushCurrent()
+
+    return chapters
 }
 
 // MARK: - Utilities
